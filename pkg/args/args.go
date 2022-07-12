@@ -1,12 +1,19 @@
 package args
 
 import (
+	"errors"
 	"fmt"
+	"io/ioutil"
 	"os"
 )
 
 const (
-	CommandEnvKey string = ""
+	CommandEnvKey     string = "CNI_COMMAND"
+	ContainerIDEnvKey string = "CNI_CONTAINERID"
+	NetnsEnvKey       string = "CNI_NETNS"
+	IfNameEnvKey      string = "CNI_IFNAME"
+	PathEnvKey        string = "CNI_PATH"
+	ArgsEnvKey        string = "CNI_ARGS"
 )
 
 const (
@@ -23,12 +30,12 @@ type CmdEnv struct {
 }
 
 type CmdArgs struct {
-	CmdArgKey string
-	Netns     string
-	IfName    string
-	Path      string
-	Args      string
-	StdinData string
+	ContainerID string
+	Netns       string
+	IfName      string
+	Path        string
+	Args        string
+	StdinData   []byte
 }
 
 type CNIConfiguration struct {
@@ -46,6 +53,41 @@ func GetArgsFromEnv() (string, *CmdArgs, error) {
 	if len(cmd) == 0 {
 		errMsg = fmt.Sprintf("Environment variable %s is missing!", CommandEnvKey)
 		fmt.Fprint(os.Stderr, errMsg)
-		return "", nil, errors.new(errMsg)
+		return "", nil, errors.New(errMsg)
 	}
+
+	var cmdEnvs = []CmdEnv{
+		{ContainerIDEnvKey, &conID, map[string]bool{AddCmd: true, DelCmd: true, CheckCmd: true, VersionCmd: true}},
+		{NetnsEnvKey, &netns, map[string]bool{AddCmd: true, DelCmd: true, CheckCmd: true, VersionCmd: false}},
+		{IfNameEnvKey, &ifName, map[string]bool{AddCmd: true, DelCmd: false, CheckCmd: true, VersionCmd: false}},
+		{PathEnvKey, &path, map[string]bool{AddCmd: false, DelCmd: false, CheckCmd: false, VersionCmd: false}},
+		{ArgsEnvKey, &args, map[string]bool{AddCmd: false, DelCmd: false, CheckCmd: false, VersionCmd: false}},
+	}
+
+	argsMissing := false
+	for _, v := range cmdEnvs {
+		*v.CmdArgValue = os.Getenv(v.CmdArgKey)
+		if *v.CmdArgValue == "" && v.ReqForCmd[cmd] {
+			fmt.Fprintf(os.Stderr, "the %s environment variable is missing!", v.CmdArgKey)
+			argsMissing = true
+		}
+	}
+	if argsMissing {
+		return "", nil, fmt.Errorf("required environment variable is missing")
+	}
+
+	stdinData, err := ioutil.ReadAll(os.Stdin)
+	if err != nil {
+		return "", nil, fmt.Errorf("failed to read from stdin: %v", err)
+	}
+
+	cmdArgs := &CmdArgs{
+		ContainerID: conID,
+		Netns:       netns,
+		IfName:      ifName,
+		Path:        path,
+		Args:        args,
+		StdinData:   stdinData,
+	}
+	return cmd, cmdArgs, nil
 }
